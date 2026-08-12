@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Broadcasting</title>
+</head>
+
+<body>
+  <h1>Live Broadcasting</h1>
+
+  <button id="goLive" disabled>Go Live</button>
+
+  <h2>My Camera</h2>
+  <video
+    id="localVideo"
+    autoplay
+    muted
+    playsinline
+    width="640"
+    height="360"
+  ></video>
+
+  <h2>Live Stream</h2>
+  <video
+    id="remoteVideo"
+    autoplay
+    playsinline
+    controls
+    width="640"
+    height="360"
+  ></video>
+
+  <script type="module" src="./src/client.js"></script>
+</body>
+</html>
