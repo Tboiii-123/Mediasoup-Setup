@@ -4,6 +4,7 @@ import { MEDIASOUP_ANNOUNCED_IP } from '../config/env.js';
 const transports = new Map();
 const producers = new Map();
 const consumers = new Map();
+const rooms = new Map();
 
 let worker;
 let router;
@@ -117,7 +118,9 @@ export const createProducer = async (
   transportId,
   socketId,
   kind,
-  rtpParameters
+  rtpParameters,
+  roomId
+
 ) => {
   const transportData = transports.get(transportId);
 
@@ -128,17 +131,34 @@ export const createProducer = async (
   if (transportData.socketId !== socketId) {
     throw new Error('Transport does not belong to this client');
   }
+	 const room = rooms.get(roomId);
+
+  if (!room) {
+    throw new Error('Room not found');
+  }
+
+  if (room.broadcasterId !== socketId) {
+    throw new Error(
+      'Only the broadcaster can create producers'
+    );
+  }
+
 
   const producer = await transportData.transport.produce({
     kind,
     rtpParameters,
   });
 
+
+
   producers.set(producer.id, {
     producer,
     socketId,
     transportId,
+  roomId,
   });
+
+	  room.producers.add(producer.id);
 
   console.log(
     `Producer created: ${producer.id} (${producer.kind})`
@@ -201,15 +221,19 @@ export const getProducersBySocket = (socketId) => {
   return result;
 };
 
-export const getAllProducers = () => {
-  return Array.from(producers.values()).map(
-    ({ producer, socketId }) => ({
+export const getAllProducers = (roomId) => {
+  return Array.from(producers.values())
+    .filter(({ roomId: producerRoomId }) => {
+      return producerRoomId === roomId;
+    })
+    .map(({ producer, socketId, roomId }) => ({
       id: producer.id,
       socketId,
       kind: producer.kind,
-    })
-  );
+      roomId,
+    }));
 };
+
 
 export const createConsumer = async (
   transportId,
@@ -290,6 +314,8 @@ export const resumeConsumer = async (
 };
 
 export const cleanupSocket = (socketId) => {
+  const removedProducers = [];
+
   // Close and remove consumers
   for (const [consumerId, consumerData] of consumers.entries()) {
     if (consumerData.socketId === socketId) {
@@ -322,6 +348,12 @@ export const cleanupSocket = (socketId) => {
         );
       }
 
+      removedProducers.push({
+        id: producerId,
+        socketId,
+        kind: producerData.producer.kind,
+      });
+
       producers.delete(producerId);
 
       console.log(
@@ -353,4 +385,88 @@ export const cleanupSocket = (socketId) => {
   console.log(
     `Cleaned up mediasoup resources for socket: ${socketId}`
   );
+
+  return removedProducers;
+};
+
+
+
+export const createRoom = (roomId, socketId) => {
+  if (rooms.has(roomId)) {
+    throw new Error('Room already exists');
+  }
+
+  rooms.set(roomId, {
+    broadcasterId: socketId,
+    producers: new Set(),
+  });
+
+  console.log(`Room created: ${roomId}`);
+
+  return rooms.get(roomId);
+};
+
+export const getRoom = (roomId) => {
+  return rooms.get(roomId);
+};
+
+export const joinRoom = (roomId, socketId) => {
+  const room = rooms.get(roomId);
+
+  if (!room) {
+    throw new Error('Room not found');
+  }
+
+  console.log(
+    `Socket ${socketId} joined room ${roomId}`
+  );
+
+  return room;
+};
+
+
+export const getLiveRooms = () => {
+  return Array.from(rooms.entries()).map(
+    ([roomId, room]) => ({
+      roomId,
+      broadcasterId: room.broadcasterId,
+      producerCount: room.producers.size,
+    })
+  );
+};
+
+
+export const endRoom = (roomId, socketId) => {
+  const room = rooms.get(roomId);
+
+  if (!room) {
+    throw new Error('Room not found');
+  }
+
+  if (room.broadcasterId !== socketId) {
+    throw new Error(
+      'Only the broadcaster can end the room'
+    );
+  }
+
+  // Close all producers belonging to this room
+  for (const producerId of room.producers) {
+    const producerData =
+      producers.get(producerId);
+
+    if (producerData) {
+      producerData.producer.close();
+
+      producers.delete(producerId);
+    }
+  }
+
+  // Remove the room
+  rooms.delete(roomId);
+
+  console.log(
+    `Room ended: ${roomId}`
+  );
+
+  return true;
 };

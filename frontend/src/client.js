@@ -7,6 +7,11 @@ let device;
 let localStream;
 let sendTransport;
 let recvTransport;
+const producerConsumers = new Map();
+let roomId = null;
+let isBroadcaster = false;
+let isLive = false;
+
 
 const goLiveButton = document.getElementById('goLive');
 const localVideo = document.getElementById('localVideo');
@@ -29,9 +34,9 @@ socket.on('connect', async () => {
   console.log(
     'Connected to broadcasting server:',
     socket.id
-  );
 
-  try {
+	);
+ try {
     const routerRtpCapabilities =
       await requestRouterRtpCapabilities();
 
@@ -45,9 +50,7 @@ socket.on('connect', async () => {
 
     goLiveButton.disabled = false;
 
-    await testReceiveTransport();
-
-    await consumeExistingProducers();
+  await renderLiveRooms(); 
 
   } catch (error) {
     console.error(
@@ -57,6 +60,148 @@ socket.on('connect', async () => {
   }
 });
 
+
+const renderLiveRooms = async () => {
+  const liveRoomsList =
+    document.getElementById('liveRoomsList');
+
+  if (!liveRoomsList) {
+    console.error(
+      'liveRoomsList element not found'
+    );
+
+    return;
+  }
+
+  try {
+    const rooms =
+      await getLiveRooms();
+
+    console.log(
+      'Rooms received for UI:',
+      rooms
+    );
+
+    liveRoomsList.innerHTML = '';
+
+    if (!rooms.length) {
+      liveRoomsList.innerHTML =
+        '<p>No live broadcasts right now.</p>';
+
+      return;
+    }
+
+    for (const room of rooms) {
+
+      const roomCard =
+        document.createElement('div');
+
+      roomCard.innerHTML = `
+        <h3>🔴 Live Broadcast</h3>
+
+        <p>
+          Room: ${room.roomId}
+        </p>
+
+        <p>
+          Producers: ${room.producerCount}
+        </p>
+
+        <button>
+          Join Live
+        </button>
+
+        <hr>
+      `;
+
+      const joinButton =
+        roomCard.querySelector('button');
+
+      joinButton.addEventListener(
+        'click',
+        async () => {
+
+          try {
+
+            console.log(
+              `Joining room: ${room.roomId}`
+            );
+
+            await joinBroadcastRoom(
+              room.roomId
+            );
+
+            console.log(
+              `Successfully joined: ${room.roomId}`
+            );
+
+          } catch (error) {
+
+            console.error(
+              'Failed to join room:',
+              error
+            );
+          }
+        }
+      );
+
+      liveRoomsList.appendChild(
+        roomCard
+      );
+    }
+
+  } catch (error) {
+
+    console.error(
+      'Failed to render live rooms:',
+      error
+    );
+
+    liveRoomsList.innerHTML =
+      '<p>Failed to load live broadcasts.</p>';
+  }
+};
+
+const endBroadcast = () => {
+  return new Promise((resolve, reject) => {
+
+    if (!roomId) {
+      reject(
+        new Error('No active room')
+      );
+      return;
+    }
+
+    socket.emit(
+      'endRoom',
+      {
+        roomId,
+      },
+      (response) => {
+
+        console.log(
+          'End room response:',
+          response
+        );
+
+        if (
+          !response.success
+        ) {
+          reject(
+            new Error(
+              response.error ||
+              'Failed to end broadcast'
+            )
+          );
+
+          return;
+        }
+
+        resolve(response);
+      }
+    );
+  });
+};
 
 const getLocalMedia = async () => {
   try {
@@ -84,12 +229,132 @@ const getLocalMedia = async () => {
   }
 };
 
+const getLiveRooms = () => {
 
-goLiveButton.addEventListener(
+  return new Promise(
+    (resolve, reject) => {
+
+      socket.emit(
+        'getLiveRooms',
+        (response) => {
+
+          if (
+            !response.success
+          ) {
+
+            reject(
+              new Error(
+                response.error
+              )
+            );
+
+            return;
+          }
+
+          console.log(
+            'Live rooms:',
+            response.rooms
+          );
+
+          resolve(
+            response.rooms
+          );
+        }
+      );
+    }
+  );
+};
+
+
+const createRoom = (roomId) => {
+  return new Promise((resolve, reject) => {
+    socket.emit(
+      'createRoom',
+      { roomId },
+      (response) => {
+        console.log(
+          'Create room response:',
+          response
+        );
+
+        if (!response.success) {
+          reject(
+            new Error(response.error)
+          );
+          return;
+        }
+
+        resolve(response);
+      }
+    );
+  });
+};
+
+
+
+      goLiveButton.addEventListener(
   'click',
   async () => {
 
+    if (isLive) {
+
+      try {
+
+        await endBroadcast();
+
+        console.log(
+          'Broadcast ended'
+        );
+
+        isLive = false;
+        isBroadcaster = false;
+
+        goLiveButton.textContent =
+          'Go Live';
+
+        goLiveButton.disabled =
+          false;
+
+        if (localStream) {
+
+          localStream
+            .getTracks()
+            .forEach(
+              (track) => track.stop()
+            );
+
+          localStream = null;
+
+          localVideo.srcObject =
+            null;
+        }
+
+        if (sendTransport) {
+
+          sendTransport.close();
+
+          sendTransport = null;
+        }
+
+        roomId = null;
+
+        console.log(
+          'Broadcast cleanup complete'
+        );
+
+      } catch (error) {
+
+        console.error(
+          'Failed to end broadcast:',
+          error
+        );
+      }
+
+      return;
+    }
+
     if (!device) {
+
       console.error(
         'Mediasoup device is not ready'
       );
@@ -97,18 +362,47 @@ goLiveButton.addEventListener(
       return;
     }
 
+    // your existing Go Live code continues here...
+
     try {
 
-      await setupSendTransport();
+      roomId = 'test-room';
 
-      console.log(
-        'Send transport ready'
+      socket.emit(
+        'createRoom',
+        { roomId },
+        async (response) => {
+
+          if (!response.success) {
+            console.error(
+              'Failed to create room:',
+              response.error
+            );
+            return;
+          }
+
+          isBroadcaster = true;
+
+          console.log(
+            'Room created:',
+            roomId
+          );
+
+          await setupSendTransport();
+
+          console.log(
+            'Broadcast started'
+          );
+		goLiveButton.textContent = 'End Live';
+			isLive = true;
+
+        }
       );
 
     } catch (error) {
 
       console.error(
-        'Failed to setup send transport:',
+        'Failed to start broadcast:',
         error
       );
     }
@@ -205,12 +499,10 @@ const setupSendTransport = async () => {
       socket.emit(
         'produce',
         {
-          transportId:
-            sendTransport.id,
-
+          transportId:sendTransport.id,
           kind,
-
           rtpParameters,
+ 	  roomId,
         },
 
         (response) => {
@@ -373,44 +665,34 @@ const testReceiveTransport = () => {
 };
 
 
+ 
 const getActiveProducers = () => {
-
-  return new Promise(
-    (resolve, reject) => {
-
-      socket.emit(
-        'getProducers',
-        (response) => {
-
-          if (response.error) {
-
-            console.error(
-              'Failed to get producers:',
-              response.error
-            );
-
-            reject(
-              new Error(
-                response.error
-              )
-            );
-
-            return;
-          }
-
-          console.log(
-            'Active producers:',
-            response.producers
+  return new Promise((resolve, reject) => {
+    socket.emit(
+      'getProducers',
+      {
+        roomId,
+      },
+      (response) => {
+        if (response.error) {
+          reject(
+            new Error(response.error)
           );
-
-          resolve(
-            response.producers
-          );
+          return;
         }
-      );
-    }
-  );
+
+        console.log(
+          'Active producers:',
+          response.producers
+        );
+
+        resolve(response.producers);
+      }
+    );
+  });
 };
+
+   
 
 
 const consumeProducer = (
@@ -467,8 +749,12 @@ const consumeProducer = (
               `Consumer created: ${consumer.id} (${consumer.kind})`
             );
 
+producerConsumers.set(
+  producerId,
+  consumer
+);
 
-            socket.emit(
+          socket.emit(
               'resumeConsumer',
               {
                 consumerId:
@@ -553,7 +839,7 @@ const consumeExistingProducers = async () => {
       } catch (error) {
 
         console.error(
-          `Failed to consume producer ${producerId}:`,
+          `Failed to consume producer ${producer.id}:`,
           error
         );
       }
@@ -578,6 +864,280 @@ const consumeExistingProducers = async () => {
 
     console.error(
       'Failed to consume producers:',
+      error
+    );
+  }
+};
+
+
+socket.on(
+  'newProducer',
+  async (producer) => {
+    console.log(
+      'New producer:',
+      producer
+    );
+
+    try {
+      const consumer =
+        await consumeProducer(
+          producer.id
+        );
+
+      let stream =
+        remoteVideo.srcObject;
+
+      if (!stream) {
+        stream =
+          new MediaStream();
+
+        remoteVideo.srcObject =
+          stream;
+      }
+
+      stream.addTrack(
+        consumer.track
+      );
+
+      await remoteVideo.play();
+
+      console.log(
+        `Added new ${producer.kind} producer to remote stream`
+      );
+
+    } catch (error) {
+      console.error(
+        `Failed to consume new producer ${producer.id}:`,
+        error
+      );
+    }
+  }
+);
+
+
+socket.on(
+  'producerClosed',
+  (producer) => {
+    console.log(
+      'Producer closed:',
+      producer
+    );
+
+    const consumer =
+      producerConsumers.get(
+        producer.id
+      );
+
+    if (!consumer) {
+      console.log(
+        'No consumer found for producer:',
+        producer.id
+      );
+
+      return;
+    }
+
+    try {
+      consumer.close();
+    } catch (error) {
+      console.error(
+        'Failed to close consumer:',
+        error
+      );
+    }
+
+    producerConsumers.delete(
+      producer.id
+    );
+
+    const stream =
+      remoteVideo.srcObject;
+
+    if (!stream) {
+      return;
+    }
+
+    stream.removeTrack(
+      consumer.track
+    );
+
+    consumer.track.stop();
+
+    console.log(
+      `Removed ${producer.kind} track from remote stream`
+    );
+
+    if (
+      stream.getTracks().length === 0
+    ) {
+      remoteVideo.srcObject = null;
+
+      console.log(
+        'Remote stream ended'
+      );
+    }
+  }
+);
+
+
+const initializeMediasoup = async () => {
+  try {
+    const routerRtpCapabilities =
+      await requestRouterRtpCapabilities();
+
+    device =
+      new mediasoupClient.Device();
+
+    await device.load({
+      routerRtpCapabilities,
+    });
+
+    console.log(
+      'Mediasoup device loaded'
+    );
+
+    await testReceiveTransport();
+
+  } catch (error) {
+    console.error(
+      'Failed to initialize Mediasoup:',
+      error
+    );
+
+    throw error;
+  }
+};
+
+
+const createBroadcastRoom = () => {
+  return new Promise((resolve, reject) => {
+    socket.emit(
+      'createRoom',
+      {},
+      (response) => {
+        console.log(
+          'Create room response:',
+          response
+        );
+
+        if (!response.success) {
+          reject(
+            new Error(response.error)
+          );
+          return;
+        }
+
+        roomId = response.roomId;
+
+        isBroadcaster = true;
+
+        console.log(
+          'Broadcast room created:',
+          roomId
+        );
+
+        resolve(response);
+      }
+    );
+  });
+};
+
+const joinBroadcastRoom = (requestedRoomId) => {
+  return new Promise((resolve, reject) => {
+
+    socket.emit(
+      'joinRoom',
+      {
+        roomId: requestedRoomId,
+      },
+
+      async (response) => {
+
+        console.log(
+          'Join room response:',
+          response
+        );
+
+        if (!response.success) {
+          reject(
+            new Error(response.error)
+          );
+          return;
+        }
+
+        roomId = response.roomId;
+
+        isBroadcaster = false;
+
+        try {
+
+          await testReceiveTransport();
+
+          await consumeExistingProducers();
+
+          console.log(
+            'Joined broadcast successfully'
+          );
+
+          resolve(response);
+
+        } catch (error) {
+
+          console.error(
+            'Failed to setup viewer:',
+            error
+          );
+
+          reject(error);
+        }
+      }
+    );
+  });
+};
+
+const startBroadcast = async (newRoomId) => {
+  try {
+    roomId = newRoomId;
+    isBroadcaster = true;
+
+    // 1. Create room
+    socket.emit(
+      'createRoom',
+      { roomId },
+      async (response) => {
+        if (!response.success) {
+          console.error(
+            'Failed to create room:',
+            response.error
+          );
+          return;
+        }
+
+        console.log(
+          'Room created:',
+          roomId
+        );
+
+        // 2. Get camera + microphone
+        const mediaReady =
+          await getLocalMedia();
+
+        if (!mediaReady) {
+          return;
+        }
+
+        // 3. Create send transport
+        await setupSendTransport();
+
+        console.log(
+          'Broadcaster is ready'
+        );
+      }
+    );
+
+  } catch (error) {
+    console.error(
+      'Failed to start broadcast:',
       error
     );
   }
