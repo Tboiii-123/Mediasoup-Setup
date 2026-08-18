@@ -1,6 +1,7 @@
 import { createWebRtcTransport,connectTransport,
-createProducer,  getRouter,  createRecvTransport,  resumeConsumer,  cleanupSocket,
 
+createProducer,  getRouter,  createRecvTransport,  
+resumeConsumer,  cleanupSocket,
 createConsumer,  getProducersBySocket,  getAllProducers,
 createRoom, getRoom,  joinRoom,getLiveRooms,   endRoom,
 
@@ -10,36 +11,68 @@ export const setupSignaling = (io) => {
   io.on('connection', (socket) => {
     console.log(`Client connected: ${socket.id}`);
 
-    socket.on('createWebRtcTransport', async (_, callback) => {
-      try {
-     const transport = await createWebRtcTransport(socket.id);
-
+   socket.on(
+  'createWebRtcTransport',
+  async ({ roomId } = {}, callback) => {
+    try {
+      if (!roomId) {
         callback({
-          id: transport.id,
-          iceParameters: transport.iceParameters,
-          iceCandidates: transport.iceCandidates,
-          dtlsParameters: transport.dtlsParameters,
+          error: 'roomId is required',
         });
 
-      } catch (error) {
-        console.error('Failed to create WebRTC transport:', error);
-
-        callback({
-          error: error.message,
-        });
+        return;
       }
-    });
 
-socket.on('createRoom', ({ roomId }, callback) => {
+      const transport =
+        await createWebRtcTransport(
+          socket.id,
+          roomId
+        );
+
+      callback({
+        id: transport.id,
+        iceParameters:
+          transport.iceParameters,
+        iceCandidates:
+          transport.iceCandidates,
+        dtlsParameters:
+          transport.dtlsParameters,
+      });
+
+    } catch (error) {
+      console.error(
+        'Failed to create WebRTC transport:',
+        error
+      );
+
+      callback({
+        error: error.message,
+      });
+    }
+  }
+);
+
+
+socket.on('createRoom', (_, callback) => {
   try {
-    createRoom(roomId, socket.id);
+    const room = createRoom(socket.id);
+
+    socket.join(`broadcast:${room.roomId}`);
 
     callback({
       success: true,
-      roomId,
+      roomId: room.roomId,
+      broadcasterId: room.broadcasterId,
+      status: room.status,
+      createdAt: room.createdAt,
+      viewerCount: room.viewers.size,
     });
+
   } catch (error) {
-    console.error('Failed to create room:', error);
+    console.error(
+      'Failed to create room:',
+      error
+    );
 
     callback({
       success: false,
@@ -48,17 +81,37 @@ socket.on('createRoom', ({ roomId }, callback) => {
   }
 });
 
+
 socket.on('joinRoom', ({ roomId }, callback) => {
   try {
-    const room = joinRoom(roomId, socket.id);
+    const room = joinRoom(
+      roomId,
+      socket.id
+    );
+
+    socket.join(`broadcast:${roomId}`);
 
     callback({
       success: true,
       roomId,
       broadcasterId: room.broadcasterId,
+      viewerCount: room.viewers.size,
+      status: room.status,
     });
+
+    socket.to(`broadcast:${roomId}`).emit(
+      'viewerCountUpdated',
+      {
+        roomId,
+        viewerCount: room.viewers.size,
+      }
+    );
+
   } catch (error) {
-    console.error('Failed to join room:', error);
+    console.error(
+      'Failed to join room:',
+      error
+    );
 
     callback({
       success: false,
@@ -66,6 +119,8 @@ socket.on('joinRoom', ({ roomId }, callback) => {
     });
   }
 });
+
+
 
 
 socket.on('connectTransport', async ({ transportId, dtlsParameters }, callback) => {
@@ -140,9 +195,15 @@ socket.on('getRouterRtpCapabilities', (callback) => {
 
 
 
-socket.on('createRecvTransport', async (_, callback) => {
+socket.on(
+  'createRecvTransport',
+  async ({ roomId } = {}, callback) => {
   try {
-    const transport = await createRecvTransport(socket.id);
+    const transport =
+  await createRecvTransport(
+    socket.id,
+    roomId
+  );
 
     callback({
       id: transport.id,
@@ -150,7 +211,7 @@ socket.on('createRecvTransport', async (_, callback) => {
       iceCandidates: transport.iceCandidates,
       dtlsParameters: transport.dtlsParameters,
     });
-  } catch (error) {
+
     console.error(
       'Failed to create receive transport:',
       error
@@ -297,31 +358,32 @@ socket.on(
   }
 );
 
-
 socket.on(
   'endRoom',
   ({ roomId }, callback) => {
     try {
-
-      endRoom(
+      const result = endRoom(
         roomId,
         socket.id
       );
 
       callback({
         success: true,
+        roomId,
       });
 
-      // Tell everyone else that the room ended
-      socket.broadcast.emit(
+      io.to(`broadcast:${roomId}`).emit(
         'roomEnded',
         {
           roomId,
         }
       );
 
-    } catch (error) {
+      socket.leave(
+        `broadcast:${roomId}`
+      );
 
+    } catch (error) {
       console.error(
         'Failed to end room:',
         error
@@ -337,18 +399,46 @@ socket.on(
 
 
 
-  socket.on('disconnect', () => {
-  console.log(`Client disconnected: ${socket.id}`);
 
-  const removedProducers =
+  socket.on('disconnect', () => {
+  console.log(
+    `Client disconnected: ${socket.id}`
+  );
+
+  const cleanup =
     cleanupSocket(socket.id);
 
-  for (const producer of removedProducers) {
-    socket.broadcast.emit('producerClosed', {
-      id: producer.id,
-      socketId: producer.socketId,
-      kind: producer.kind,
-    });
+  // Notify rooms about producer removal
+  for (const producer of cleanup.removedProducers) {
+    io.to(`broadcast:${producer.roomId}`).emit(
+      'producerClosed',
+      {
+        id: producer.id,
+        socketId: producer.socketId,
+        kind: producer.kind,
+      }
+    );
+  }
+
+  // Notify viewers when viewer count changes
+  for (const room of cleanup.removedViewerRooms) {
+    io.to(`broadcast:${room.roomId}`).emit(
+      'viewerCountUpdated',
+      {
+        roomId: room.roomId,
+        viewerCount: room.viewerCount,
+      }
+    );
+  }
+
+  // Broadcaster disconnected
+  for (const room of cleanup.endedRooms) {
+    io.to(`broadcast:${room.roomId}`).emit(
+      'roomEnded',
+      {
+        roomId: room.roomId,
+      }
+    );
   }
 });
 

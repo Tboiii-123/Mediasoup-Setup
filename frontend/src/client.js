@@ -266,33 +266,11 @@ const getLiveRooms = () => {
 };
 
 
-const createRoom = (roomId) => {
-  return new Promise((resolve, reject) => {
-    socket.emit(
-      'createRoom',
-      { roomId },
-      (response) => {
-        console.log(
-          'Create room response:',
-          response
-        );
-
-        if (!response.success) {
-          reject(
-            new Error(response.error)
-          );
-          return;
-        }
-
-        resolve(response);
-      }
-    );
-  });
-};
 
 
 
-      goLiveButton.addEventListener(
+
+goLiveButton.addEventListener(
   'click',
   async () => {
 
@@ -366,38 +344,14 @@ const createRoom = (roomId) => {
 
     try {
 
-      roomId = 'test-room';
+ const response = await createBroadcastRoom();
 
-      socket.emit(
-        'createRoom',
-        { roomId },
-        async (response) => {
+await setupSendTransport();
 
-          if (!response.success) {
-            console.error(
-              'Failed to create room:',
-              response.error
-            );
-            return;
-          }
+console.log('Broadcast started');
 
-          isBroadcaster = true;
-
-          console.log(
-            'Room created:',
-            roomId
-          );
-
-          await setupSendTransport();
-
-          console.log(
-            'Broadcast started'
-          );
-		goLiveButton.textContent = 'End Live';
-			isLive = true;
-
-        }
-      );
+goLiveButton.textContent = 'End Live';
+isLive = true;
 
     } catch (error) {
 
@@ -417,8 +371,9 @@ const createSendTransport = () => {
 
       socket.emit(
         'createWebRtcTransport',
-        null,
-        (response) => {
+  	{
+          roomId,
+        },        (response) => {
 
           if (response.error) {
             reject(
@@ -583,8 +538,10 @@ const testReceiveTransport = () => {
     (resolve, reject) => {
 
       socket.emit(
-        'createRecvTransport',
-        null,
+  'createRecvTransport',
+  {
+    roomId,
+  },
         (response) => {
 
           if (response.error) {
@@ -1009,7 +966,8 @@ const initializeMediasoup = async () => {
 };
 
 
-const createBroadcastRoom = () => {
+
+    const createBroadcastRoom = () => {
   return new Promise((resolve, reject) => {
     socket.emit(
       'createRoom',
@@ -1028,7 +986,6 @@ const createBroadcastRoom = () => {
         }
 
         roomId = response.roomId;
-
         isBroadcaster = true;
 
         console.log(
@@ -1041,6 +998,7 @@ const createBroadcastRoom = () => {
     );
   });
 };
+
 
 const joinBroadcastRoom = (requestedRoomId) => {
   return new Promise((resolve, reject) => {
@@ -1095,50 +1053,3 @@ const joinBroadcastRoom = (requestedRoomId) => {
   });
 };
 
-const startBroadcast = async (newRoomId) => {
-  try {
-    roomId = newRoomId;
-    isBroadcaster = true;
-
-    // 1. Create room
-    socket.emit(
-      'createRoom',
-      { roomId },
-      async (response) => {
-        if (!response.success) {
-          console.error(
-            'Failed to create room:',
-            response.error
-          );
-          return;
-        }
-
-        console.log(
-          'Room created:',
-          roomId
-        );
-
-        // 2. Get camera + microphone
-        const mediaReady =
-          await getLocalMedia();
-
-        if (!mediaReady) {
-          return;
-        }
-
-        // 3. Create send transport
-        await setupSendTransport();
-
-        console.log(
-          'Broadcaster is ready'
-        );
-      }
-    );
-
-  } catch (error) {
-    console.error(
-      'Failed to start broadcast:',
-      error
-    );
-  }
-};
