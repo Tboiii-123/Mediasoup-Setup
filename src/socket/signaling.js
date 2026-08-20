@@ -194,34 +194,49 @@ socket.on('getRouterRtpCapabilities', (callback) => {
 });
 
 
-
 socket.on(
   'createRecvTransport',
   async ({ roomId } = {}, callback) => {
-  try {
-    const transport =
-  await createRecvTransport(
-    socket.id,
-    roomId
-  );
+    try {
+      if (!roomId) {
+        callback({
+          error: 'roomId is required',
+        });
 
-    callback({
-      id: transport.id,
-      iceParameters: transport.iceParameters,
-      iceCandidates: transport.iceCandidates,
-      dtlsParameters: transport.dtlsParameters,
-    });
+        return;
+      }
 
-    console.error(
-      'Failed to create receive transport:',
-      error
-    );
+      const transport =
+        await createRecvTransport(
+          socket.id,
+          roomId
+        );
 
-    callback({
-      error: error.message,
-    });
+      callback({
+        id: transport.id,
+        iceParameters:
+          transport.iceParameters,
+        iceCandidates:
+          transport.iceCandidates,
+        dtlsParameters:
+          transport.dtlsParameters,
+      });
+
+    } catch (error) {
+      console.error(
+        'Failed to create receive transport:',
+        error
+      );
+
+      callback({
+        error: error.message,
+      });
+    }
   }
-});
+);
+
+     
+
 
 socket.on(
   'consume',
