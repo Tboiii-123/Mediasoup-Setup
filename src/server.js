@@ -7,19 +7,27 @@ import { Server } from 'socket.io';
 import { PORT, NODE_ENV } from './config/env.js';
 import { setupSignaling } from './socket/signaling.js';
 
-// IMPORTANT
 import {
   createWorker,
   createRouter,
-  createRoom,
 } from './services/mediasoup.js';
+
 
 const app = express();
 
 
-// --------------------------------
+// ============================================
+// MIDDLEWARE
+// ============================================
+
+app.use(cors());
+
+app.use(express.json());
+
+
+// ============================================
 // HTTPS SERVER
-// --------------------------------
+// ============================================
 
 const httpsServer = https.createServer(
   {
@@ -36,9 +44,9 @@ const httpsServer = https.createServer(
 );
 
 
-// --------------------------------
+// ============================================
 // SOCKET.IO
-// --------------------------------
+// ============================================
 
 const io = new Server(
   httpsServer,
@@ -50,21 +58,13 @@ const io = new Server(
 );
 
 
-// --------------------------------
-// MIDDLEWARE
-// --------------------------------
-
-app.use(cors());
-
-app.use(express.json());
-
-
-// --------------------------------
+// ============================================
 // HEALTH CHECK
-// --------------------------------
+// ============================================
 
 app.get('/', (req, res) => {
   res.json({
+    success: true,
     message:
       'Broadcasting server is running',
 
@@ -73,72 +73,24 @@ app.get('/', (req, res) => {
 });
 
 
-// --------------------------------
-// CREATE ROOM API
-// --------------------------------
-app.post('/api/rooms', (req, res) => {
-  try {
-    const { roomId, userId } = req.body;
-
-    if (!roomId) {
-      return res.status(400).json({
-        success: false,
-        error: 'roomId is required',
-      });
-    }
-
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        error: 'userId is required',
-      });
-    }
-
-    const room = createRoom(
-      roomId,
-      userId
-    );
-
-    return res.status(201).json({
-      success: true,
-      roomId: room.roomId,
-      userId: room.userId,
-      status: room.status,
-      createdAt: room.createdAt,
-      viewerCount: room.viewers.size,
-    });
-
-  } catch (error) {
-    console.error(
-      'Failed to create room:',
-      error
-    );
-
-    return res.status(500).json({
-      success: false,
-      error: error.message,
-    });
-  }
-});
-
-// --------------------------------
+// ============================================
 // SOCKET.IO SIGNALING
-// --------------------------------
+// ============================================
 
 setupSignaling(io);
 
 
-// --------------------------------
+// ============================================
 // START SERVER
-// --------------------------------
+// ============================================
 
-const startServer =
-  async () => {
+const startServer = async () => {
+
+  try {
 
     await createWorker();
 
     await createRouter();
-
 
     httpsServer.listen(
       PORT,
@@ -150,7 +102,17 @@ const startServer =
 
       }
     );
-  };
+
+  } catch (error) {
+
+    console.error(
+      'Failed to start broadcasting server:',
+      error
+    );
+
+    process.exit(1);
+  }
+};
 
 
 startServer();

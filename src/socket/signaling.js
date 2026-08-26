@@ -1,7 +1,7 @@
 import { createWebRtcTransport,connectTransport,
 
 createProducer,  getRouter,  createRecvTransport,  
-resumeConsumer,  cleanupSocket,
+resumeConsumer,  cleanupSocket, createRoom,
 createConsumer,  getProducersBySocket,  getAllProducers, getRoom,  joinRoom,getLiveRooms,   endRoom,registerBroadcaster,
 
  } from '../services/mediasoup.js';
@@ -96,6 +96,46 @@ socket.on(
   }
 );
 
+socket.on(
+  'createRoom',
+  ({ roomId, userId } = {}, callback) => {
+    try {
+      if (!userId) {
+        callback?.({
+          success: false,
+          error: 'userId is required',
+        });
+        return;
+      }
+
+      const room = createRoom(
+        roomId,
+        userId
+      );
+
+      callback?.({
+        success: true,
+        roomId: room.roomId,
+        userId: room.userId,
+        status: room.status,
+        createdAt: room.createdAt,
+        viewerCount: room.viewers.size,
+      });
+
+    } catch (error) {
+      console.error(
+        'Failed to create room:',
+        error
+      );
+
+      callback?.({
+        success: false,
+        error: error.message,
+      });
+    }
+  }
+);
+
 socket.on('joinRoom', ({ roomId }, callback) => {
   try {
     const room = joinRoom(
@@ -137,22 +177,37 @@ socket.on('joinRoom', ({ roomId }, callback) => {
 
 
 
-socket.on('connectTransport', async ({ transportId, dtlsParameters }, callback) => {
-  try {
-    await connectTransport(transportId, dtlsParameters);
+socket.on(
+  'connectTransport',
+  async (
+    { transportId, dtlsParameters },
+    callback
+  ) => {
+    try {
+      await connectTransport(
+        transportId,
+        socket.id,
+        dtlsParameters
+      );
 
-    callback({
-      success: true,
-    });
-  } catch (error) {
-    console.error('Failed to connect WebRTC transport:', error);
+      callback({
+        success: true,
+      });
 
-    callback({
-      success: false,
-      error: error.message,
-    });
+    } catch (error) {
+      console.error(
+        'Failed to connect WebRTC transport:',
+        error
+      );
+
+      callback({
+        success: false,
+        error: error.message,
+      });
+    }
   }
-});
+);
+
 
 socket.on(
   'produce',
