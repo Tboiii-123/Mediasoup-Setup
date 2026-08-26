@@ -10,6 +10,7 @@ import { setupSignaling } from './socket/signaling.js';
 import {
   createWorker,
   createRouter,
+  createRoom,
 } from './services/mediasoup.js';
 
 
@@ -63,18 +64,104 @@ const io = new Server(
 // ============================================
 
 app.get('/', (req, res) => {
+
   res.json({
     success: true,
     message:
       'Broadcasting server is running',
-
-    environment: NODE_ENV,
+    environment:
+      NODE_ENV,
   });
+
 });
 
 
 // ============================================
-// SOCKET.IO SIGNALING
+// INTERNAL ROOM CREATION
+// ============================================
+
+app.post(
+  '/internal/rooms',
+  (req, res) => {
+
+    try {
+
+      const {
+        roomId,
+        userId,
+      } = req.body;
+
+
+      if (!roomId) {
+
+        return res.status(400).json({
+          success: false,
+          error: 'roomId is required',
+        });
+
+      }
+
+
+      if (!userId) {
+
+        return res.status(400).json({
+          success: false,
+          error: 'userId is required',
+        });
+
+      }
+
+
+      const room =
+        createRoom(
+          roomId,
+          userId
+        );
+
+
+      return res.status(201).json({
+
+        success: true,
+
+        roomId:
+          room.roomId,
+
+        userId:
+          room.userId,
+
+        status:
+          room.status,
+
+        createdAt:
+          room.createdAt,
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        'Failed to create internal broadcast room:',
+        error
+      );
+
+
+      return res.status(500).json({
+
+        success: false,
+
+        error:
+          error.message,
+
+      });
+
+    }
+
+  }
+);
+
+
+// ============================================
+// SIGNALING
 // ============================================
 
 setupSignaling(io);
@@ -91,6 +178,7 @@ const startServer = async () => {
     await createWorker();
 
     await createRouter();
+
 
     httpsServer.listen(
       PORT,
@@ -112,6 +200,7 @@ const startServer = async () => {
 
     process.exit(1);
   }
+
 };
 
 
