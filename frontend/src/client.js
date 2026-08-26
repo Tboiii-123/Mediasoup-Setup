@@ -1413,6 +1413,9 @@ const cleanupBroadcast = () => {
 // ============================================
 // GO LIVE BUTTON
 // ============================================
+// ============================================
+// GO LIVE BUTTON
+// ============================================
 
 goLiveButton.addEventListener(
   'click',
@@ -1463,30 +1466,56 @@ goLiveButton.addEventListener(
 
 
     // ----------------------------------------
-    // IMPORTANT
+    // START LIVE BROADCAST
     // ----------------------------------------
-    //
-    // We already created this room
-    // through your API:
-    //
-    // test-room-001
-    //
-    // ----------------------------------------
-
-    const broadcastRoomId =
-      'test-room-001';
-
 
     try {
+
+      // 1. Create the live broadcast
+      //    through your MAIN API
+
+      const live =
+        await startLiveBroadcast({
+          title:
+            'My First Live Broadcast',
+
+          category:
+            'News',
+        });
+
+
+      console.log(
+        'Live broadcast created:',
+        live
+      );
+
+
+      // 2. Get the room ID created
+      //    by the MAIN API
+
+      const broadcastRoomId =
+        live.room_id;
+
+
+      console.log(
+        'Broadcast room ID:',
+        broadcastRoomId
+      );
+
+
+      // 3. Start the mediasoup
+      //    broadcast using that room
 
       await startBroadcast(
         broadcastRoomId
       );
 
+
       console.log(
         'Now LIVE in room:',
         roomId
       );
+
 
     } catch (error) {
 
@@ -1494,9 +1523,12 @@ goLiveButton.addEventListener(
         'Failed to start broadcast:',
         error
       );
+
     }
+
   }
 );
+
 
 
 // ============================================
@@ -1557,6 +1589,8 @@ socket.on(
 );
 
 
+
+
 // ============================================
 // DISCONNECT
 // ============================================
@@ -1570,3 +1604,60 @@ socket.on(
     );
   }
 );
+
+
+
+
+
+
+const startLiveBroadcast = async ({
+  title,
+  category,
+  lat,
+  lng,
+}) => {
+
+  const token =
+    localStorage.getItem('accessToken');
+
+  const response =
+    await fetch(
+      'http://localhost:5000/api/live/start',
+      {
+        method: 'POST',
+
+        headers: {
+          'Content-Type':
+            'application/json',
+
+          'Authorization':
+            `Bearer ${token}`,
+        },
+
+        body: JSON.stringify({
+          title,
+          category,
+          lat,
+          lng,
+        }),
+      }
+    );
+
+  const data =
+    await response.json();
+
+  console.log(
+    'Live API response:',
+    data
+  );
+
+  if (!response.ok) {
+
+    throw new Error(
+      data.message ||
+      'Failed to start live broadcast'
+    );
+  }
+
+  return data;
+};

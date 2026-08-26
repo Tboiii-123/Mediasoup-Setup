@@ -70,6 +70,8 @@ socket.on(
         socket.id
       );
 
+      
+
       socket.join(
         `broadcast:${roomId}`
       );
