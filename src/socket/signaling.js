@@ -6,10 +6,13 @@ createConsumer,  getProducersBySocket,  getAllProducers,
 createRoom, getRoom,  joinRoom,getLiveRooms,   endRoom,
 
  } from '../services/mediasoup.js';
+import crypto from 'crypto';
 
 export const setupSignaling = (io) => {
-  io.on('connection', (socket) => {
+
+	   io.on('connection', (socket) => {
     console.log(`Client connected: ${socket.id}`);
+ 
 
    socket.on(
   'createWebRtcTransport',
@@ -142,28 +145,41 @@ socket.on('connectTransport', async ({ transportId, dtlsParameters }, callback) 
 
 socket.on(
   'produce',
-  async ({ transportId, kind, rtpParameters, roomId }, callback) => {
+  async (
+    { transportId, kind, rtpParameters, roomId },
+    callback
+  ) => {
     try {
       const producer = await createProducer(
         transportId,
         socket.id,
         kind,
         rtpParameters,
- 	roomId
-
+        roomId
       );
 
       callback({
         id: producer.id,
       });
 
-      socket.broadcast.emit('newProducer', {
-        id: producer.id,
-        socketId: socket.id,
-        kind: producer.kind,
-      });
+      // Notify only viewers in this broadcast room
+      socket.to(
+        `broadcast:${roomId}`
+      ).emit(
+        'newProducer',
+        {
+          id: producer.id,
+          socketId: socket.id,
+          kind: producer.kind,
+          roomId,
+        }
+      );
+
     } catch (error) {
-      console.error('Failed to create producer:', error);
+      console.error(
+        'Failed to create producer:',
+        error
+      );
 
       callback({
         error: error.message,
@@ -171,7 +187,6 @@ socket.on(
     }
   }
 );
-
 
 
 socket.on('getRouterRtpCapabilities', (callback) => {
@@ -237,30 +252,40 @@ socket.on(
 
      
 
-
 socket.on(
   'consume',
   async (
-    { transportId, producerId, rtpCapabilities },
+    {
+      transportId,
+      producerId,
+      rtpCapabilities,
+      roomId,
+    },
     callback
   ) => {
     try {
-      const consumer = await createConsumer(
-        transportId,
-        socket.id,
-        producerId,
-        rtpCapabilities
-      );
+      const consumer =
+        await createConsumer(
+          transportId,
+          socket.id,
+          producerId,
+          rtpCapabilities,
+          roomId
+        );
 
       callback({
         id: consumer.id,
         producerId: consumer.producerId,
         kind: consumer.kind,
-        rtpParameters: consumer.rtpParameters,
+        rtpParameters:
+          consumer.rtpParameters,
       });
 
     } catch (error) {
-      console.error('Failed to create consumer:', error);
+      console.error(
+        'Failed to create consumer:',
+        error
+      );
 
       callback({
         error: error.message,
@@ -268,7 +293,6 @@ socket.on(
     }
   }
 );
-
 
 
 socket.on(
@@ -412,6 +436,171 @@ socket.on(
   }
 );
 
+socket.on(
+  'sendComment',
+  ({ roomId, comment }, callback) => {
+    try {
+      if (!roomId) {
+        callback?.({
+          success: false,
+          error: 'roomId is required',
+        });
+        return;
+      }
+
+      if (
+        typeof comment !== 'string' ||
+        !comment.trim()
+      ) {
+        callback?.({
+          success: false,
+          error: 'Comment cannot be empty',
+        });
+        return;
+      }
+
+      const room = getRoom(roomId);
+
+      if (!room) {
+        callback?.({
+          success: false,
+          error: 'Room not found',
+        });
+        return;
+      }
+
+      // Check that this socket is actually in the room
+      const isBroadcaster =
+        room.broadcasterId === socket.id;
+
+      const isViewer =
+        room.viewers.has(socket.id);
+
+      if (!isBroadcaster && !isViewer) {
+        callback?.({
+          success: false,
+          error: 'You are not a member of this room',
+        });
+        return;
+      }
+
+      const commentData = {
+        id: crypto.randomUUID(),
+        roomId,
+        socketId: socket.id,
+        comment: comment.trim(),
+        createdAt: new Date().toISOString(),
+      };
+
+      // Send comment to everyone in the broadcast
+      io.to(`broadcast:${roomId}`).emit(
+        'newComment',
+        commentData
+      );
+
+      callback?.({
+        success: true,
+        comment: commentData,
+      });
+
+    } catch (error) {
+      console.error(
+        'Failed to send comment:',
+        error
+      );
+
+      callback?.({
+        success: false,
+        error: error.message,
+      });
+    }
+  }
+);
+
+socket.on(
+  'sendReaction',
+  ({ roomId, reactionType }, callback) => {
+    try {
+      if (!roomId) {
+        callback?.({
+          success: false,
+          error: 'roomId is required',
+        });
+        return;
+      }
+
+      const allowedReactions = [
+        'like',
+        'love',
+        'wow',
+        'sad',
+        'angry',
+      ];
+
+      if (!allowedReactions.includes(reactionType)) {
+        callback?.({
+          success: false,
+          error: 'Invalid reaction type',
+        });
+        return;
+      }
+
+      const room = getRoom(roomId);
+
+      if (!room) {
+        callback?.({
+          success: false,
+          error: 'Room not found',
+        });
+        return;
+      }
+
+      const isBroadcaster =
+        room.broadcasterId === socket.id;
+
+      const isViewer =
+        room.viewers.has(socket.id);
+
+      if (!isBroadcaster && !isViewer) {
+        callback?.({
+          success: false,
+          error: 'You are not a member of this room',
+        });
+        return;
+      }
+
+      const reaction = {
+        id: crypto.randomUUID(),
+        roomId,
+        socketId: socket.id,
+        reactionType,
+        createdAt: new Date().toISOString(),
+      };
+
+      io.to(`broadcast:${roomId}`).emit(
+        'newReaction',
+        reaction
+      );
+
+      callback?.({
+        success: true,
+        reaction,
+      });
+
+    } catch (error) {
+      console.error(
+        'Failed to send reaction:',
+        error
+      );
+
+      callback?.({
+        success: false,
+        error: error.message,
+      });
+    }
+  }
+);
+
 
 
 
@@ -424,7 +613,9 @@ socket.on(
     cleanupSocket(socket.id);
 
   // Notify rooms about producer removal
-  for (const producer of cleanup.removedProducers) {
+    for (
+    const producer of cleanup.removedProducers || []
+  ) {
     io.to(`broadcast:${producer.roomId}`).emit(
       'producerClosed',
       {
@@ -436,7 +627,9 @@ socket.on(
   }
 
   // Notify viewers when viewer count changes
-  for (const room of cleanup.removedViewerRooms) {
+    for (
+    const room of cleanup.removedViewerRooms || []
+  ) {
     io.to(`broadcast:${room.roomId}`).emit(
       'viewerCountUpdated',
       {
@@ -447,7 +640,9 @@ socket.on(
   }
 
   // Broadcaster disconnected
-  for (const room of cleanup.endedRooms) {
+    for (
+    const room of cleanup.endedRooms || []
+  ) {
     io.to(`broadcast:${room.roomId}`).emit(
       'roomEnded',
       {
