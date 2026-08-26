@@ -2,8 +2,7 @@ import { createWebRtcTransport,connectTransport,
 
 createProducer,  getRouter,  createRecvTransport,  
 resumeConsumer,  cleanupSocket,
-createConsumer,  getProducersBySocket,  getAllProducers,
-createRoom, getRoom,  joinRoom,getLiveRooms,   endRoom,
+createConsumer,  getProducersBySocket,  getAllProducers, getRoom,  joinRoom,getLiveRooms,   endRoom,registerBroadcaster,
 
  } from '../services/mediasoup.js';
 import crypto from 'crypto';
@@ -55,35 +54,47 @@ export const setupSignaling = (io) => {
   }
 );
 
+socket.on(
+  'startBroadcast',
+  ({ roomId } = {}, callback) => {
+    try {
+      if (!roomId) {
+        return callback?.({
+          success: false,
+          error: 'roomId is required',
+        });
+      }
 
-socket.on('createRoom', (_, callback) => {
-  try {
-    const room = createRoom(socket.id);
+      const room = registerBroadcaster(
+        roomId,
+        socket.id
+      );
 
-    socket.join(`broadcast:${room.roomId}`);
+      socket.join(
+        `broadcast:${roomId}`
+      );
 
-    callback({
-      success: true,
-      roomId: room.roomId,
-      broadcasterId: room.broadcasterId,
-      status: room.status,
-      createdAt: room.createdAt,
-      viewerCount: room.viewers.size,
-    });
+      callback?.({
+        success: true,
+        roomId: room.roomId,
+        broadcasterId:
+          room.broadcasterId,
+        status: room.status,
+      });
 
-  } catch (error) {
-    console.error(
-      'Failed to create room:',
-      error
-    );
+    } catch (error) {
+      console.error(
+        'Failed to start broadcast:',
+        error
+      );
 
-    callback({
-      success: false,
-      error: error.message,
-    });
+      callback?.({
+        success: false,
+        error: error.message,
+      });
+    }
   }
-});
-
+);
 
 socket.on('joinRoom', ({ roomId }, callback) => {
   try {
@@ -602,9 +613,7 @@ socket.on(
 );
 
 
-
-
-  socket.on('disconnect', () => {
+socket.on('disconnect', () => {
   console.log(
     `Client disconnected: ${socket.id}`
   );
@@ -612,11 +621,16 @@ socket.on(
   const cleanup =
     cleanupSocket(socket.id);
 
+  // --------------------------------
   // Notify rooms about producer removal
-    for (
+  // --------------------------------
+
+  for (
     const producer of cleanup.removedProducers || []
   ) {
-    io.to(`broadcast:${producer.roomId}`).emit(
+    io.to(
+      `broadcast:${producer.roomId}`
+    ).emit(
       'producerClosed',
       {
         id: producer.id,
@@ -626,11 +640,16 @@ socket.on(
     );
   }
 
+  // --------------------------------
   // Notify viewers when viewer count changes
-    for (
-    const room of cleanup.removedViewerRooms || []
+  // --------------------------------
+
+  for (
+    const room of cleanup.affectedRooms || []
   ) {
-    io.to(`broadcast:${room.roomId}`).emit(
+    io.to(
+      `broadcast:${room.roomId}`
+    ).emit(
       'viewerCountUpdated',
       {
         roomId: room.roomId,
@@ -639,11 +658,16 @@ socket.on(
     );
   }
 
+  // --------------------------------
   // Broadcaster disconnected
-    for (
+  // --------------------------------
+
+  for (
     const room of cleanup.endedRooms || []
   ) {
-    io.to(`broadcast:${room.roomId}`).emit(
+    io.to(
+      `broadcast:${room.roomId}`
+    ).emit(
       'roomEnded',
       {
         roomId: room.roomId,
@@ -651,6 +675,8 @@ socket.on(
     );
   }
 });
+
+
 
 
   });

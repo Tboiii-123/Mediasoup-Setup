@@ -76,82 +76,50 @@ app.get('/', (req, res) => {
 // --------------------------------
 // CREATE ROOM API
 // --------------------------------
+app.post('/api/rooms', (req, res) => {
+  try {
+    const { roomId, userId } = req.body;
 
-app.post(
-  '/api/rooms',
-  (req, res) => {
-
-    try {
-
-      const {
-        roomId,
-        userId,
-      } = req.body;
-
-
-      if (!roomId) {
-        return res.status(400).json({
-          success: false,
-          error:
-            'roomId is required',
-        });
-      }
-
-
-      if (!userId) {
-        return res.status(400).json({
-          success: false,
-          error:
-            'userId is required',
-        });
-      }
-
-
-      const room =
-        createRoom(
-          roomId,
-          userId
-        );
-
-
-      return res.status(201).json({
-
-        success: true,
-
-        roomId:
-          room.roomId,
-
-        userId:
-          room.userId,
-
-        status:
-          room.status,
-
-        createdAt:
-          room.createdAt,
-
-      });
-
-    } catch (error) {
-
-      console.error(
-        'Failed to create room:',
-        error
-      );
-
-
-      return res.status(500).json({
-
+    if (!roomId) {
+      return res.status(400).json({
         success: false,
-
-        error:
-          error.message,
-
+        error: 'roomId is required',
       });
     }
-  }
-);
 
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'userId is required',
+      });
+    }
+
+    const room = createRoom(
+      roomId,
+      userId
+    );
+
+    return res.status(201).json({
+      success: true,
+      roomId: room.roomId,
+      userId: room.userId,
+      status: room.status,
+      createdAt: room.createdAt,
+      viewerCount: room.viewers.size,
+    });
+
+  } catch (error) {
+    console.error(
+      'Failed to create room:',
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
 
 // --------------------------------
 // SOCKET.IO SIGNALING

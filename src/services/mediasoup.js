@@ -407,129 +407,41 @@ export const resumeConsumer = async (
   
 
 
-export const cleanupSocket = (socketId) => {
-  const removedProducers = [];
-  const affectedRooms = [];
-
-  // Remove socket from room viewers
-  for (const [roomId, room] of rooms.entries()) {
-    if (room.viewers?.has(socketId)) {
-      room.viewers.delete(socketId);
-
-      affectedRooms.push({
-        roomId,
-        viewerCount: room.viewers.size,
-      });
-
-      console.log(
-        `Viewer ${socketId} left room ${roomId}`
-      );
-    }
+export const createRoom = (roomId, userId) => {
+  if (!roomId) {
+    throw new Error('roomId is required');
   }
 
-  // Remove producers owned by socket
-  for (const [producerId, producerData] of producers.entries()) {
-    if (producerData.socketId === socketId) {
-      try {
-        producerData.producer.close();
-      } catch (error) {
-        console.error(
-          `Failed to close producer ${producerId}:`,
-          error
-        );
-      }
-
-      removedProducers.push({
-        id: producerId,
-        socketId,
-        kind: producerData.producer.kind,
-        roomId: producerData.roomId,
-      });
-
-      // Remove from room producer set
-      const room =
-        rooms.get(producerData.roomId);
-
-      if (room) {
-        room.producers.delete(producerId);
-      }
-
-      producers.delete(producerId);
-
-      console.log(
-        `Producer removed: ${producerId}`
-      );
-    }
+  if (!userId) {
+    throw new Error('userId is required');
   }
 
-  // Remove consumers owned by socket
-  for (const [consumerId, consumerData] of consumers.entries()) {
-    if (consumerData.socketId === socketId) {
-      try {
-        consumerData.consumer.close();
-      } catch (error) {
-        console.error(
-          `Failed to close consumer ${consumerId}:`,
-          error
-        );
-      }
-
-      consumers.delete(consumerId);
-
-      console.log(
-        `Consumer removed: ${consumerId}`
-      );
-    }
+  if (rooms.has(roomId)) {
+    throw new Error('Room already exists');
   }
 
-  // Remove transports owned by socket
-  for (const [transportId, transportData] of transports.entries()) {
-    if (transportData.socketId === socketId) {
-      try {
-        transportData.transport.close();
-      } catch (error) {
-        console.error(
-          `Failed to close transport ${transportId}:`,
-          error
-        );
-      }
-
-      transports.delete(transportId);
-
-      console.log(
-        `Transport removed: ${transportId}`
-      );
-    }
-  }
-
-  console.log(
-    `Cleaned up mediasoup resources for socket: ${socketId}`
-  );
-
-  return {
-    removedProducers,
-    affectedRooms,
-  };
-};
-
-
-export const createRoom = (socketId) => {
-  const roomId = randomUUID();
-
-  rooms.set(roomId, {
+  const room = {
     roomId,
-    broadcasterId: socketId,
+    userId,
+
+    // Socket that actually becomes the broadcaster
+    broadcasterId: null,
+
     producers: new Set(),
     viewers: new Set(),
+
     createdAt: new Date(),
     status: 'live',
-  });
+  };
 
-  console.log(`Room created: ${roomId}`);
+  rooms.set(roomId, room);
 
-  return rooms.get(roomId);
+  console.log(
+    `Room created: ${roomId} for user ${userId}`
+  );
+
+  return room;
 };
-
 
 
 export const getRoom = (roomId) => {
@@ -544,10 +456,27 @@ export const joinRoom = (roomId, socketId) => {
     throw new Error('Room not found');
   }
 
-  if (room.broadcasterId === socketId) {
-    throw new Error('Broadcaster cannot join their own room as a viewer');
+  if (room.status !== 'live') {
+    throw new Error('Room is not live');
   }
 
+  // First socket joining as broadcaster
+  if (!room.broadcasterId) {
+    room.broadcasterId = socketId;
+
+    console.log(
+      `Socket ${socketId} assigned as broadcaster for room ${roomId}`
+    );
+
+    return room;
+  }
+
+  // Broadcaster reconnecting
+  if (room.broadcasterId === socketId) {
+    return room;
+  }
+
+  // Otherwise viewer
   room.viewers.add(socketId);
 
   console.log(
@@ -557,6 +486,7 @@ export const joinRoom = (roomId, socketId) => {
   return room;
 };
 
+
 export const leaveRoom = (roomId, socketId) => {
   const room = rooms.get(roomId);
 
@@ -564,9 +494,7 @@ export const leaveRoom = (roomId, socketId) => {
     return null;
   }
 
-  if (room.viewers) {
-    room.viewers.delete(socketId);
-  }
+  room.viewers.delete(socketId);
 
   console.log(
     `Socket ${socketId} left room ${roomId}`
@@ -575,6 +503,266 @@ export const leaveRoom = (roomId, socketId) => {
   return room;
 };
 
+
+export const getViewerCount = (roomId) => {
+  const room = rooms.get(roomId);
+
+  if (!room) {
+    throw new Error('Room not found');
+  }
+
+  return room.viewers.size;
+};
+
+
+export const getLiveRooms = () => {
+  return Array.from(rooms.values()).map(
+    (room) => ({
+      roomId: room.roomId,
+      userId: room.userId,
+      broadcasterId: room.broadcasterId,
+      producerCount: room.producers.size,
+      viewerCount: room.viewers.size,
+      status: room.status,
+      createdAt: room.createdAt,
+    })
+  );
+};
+
+
+export const endRoom = (roomId, socketId) => {
+  const room = rooms.get(roomId);
+
+  if (!room) {
+    throw new Error('Room not found');
+  }
+
+  if (room.broadcasterId !== socketId) {
+    throw new Error(
+      'Only the broadcaster can end the room'
+    );
+  }
+
+  const viewerIds = room.viewers
+    ? Array.from(room.viewers)
+    : [];
+
+  // Close all producers
+  for (const producerId of room.producers) {
+    const producerData =
+      producers.get(producerId);
+
+    if (producerData) {
+      try {
+        producerData.producer.close();
+      } catch (error) {
+        console.error(
+          `Failed to close producer ${producerId}:`,
+          error
+        );
+      }
+
+      producers.delete(producerId);
+    }
+  }
+
+  room.status = 'ended';
+
+  rooms.delete(roomId);
+
+  console.log(
+    `Room ended: ${roomId}`
+  );
+
+  return {
+    roomId,
+    viewerIds,
+  };
+};
+
+
+export const cleanupSocket = (socketId) => {
+  const removedProducers = [];
+  const affectedRooms = [];
+  const endedRooms = [];
+
+  // --------------------------------
+  // Remove socket from viewer lists
+  // --------------------------------
+
+  for (const [roomId, room] of rooms.entries()) {
+    if (!room.viewers?.has(socketId)) {
+      continue;
+    }
+
+    room.viewers.delete(socketId);
+
+    affectedRooms.push({
+      roomId,
+      viewerCount: room.viewers.size,
+    });
+
+    console.log(
+      `Viewer ${socketId} left room ${roomId}`
+    );
+  }
+
+  // --------------------------------
+  // Remove producers
+  // --------------------------------
+
+  for (
+    const [producerId, producerData]
+    of producers.entries()
+  ) {
+    if (producerData.socketId !== socketId) {
+      continue;
+    }
+
+    try {
+      producerData.producer.close();
+    } catch (error) {
+      console.error(
+        `Failed to close producer ${producerId}:`,
+        error
+      );
+    }
+
+    removedProducers.push({
+      id: producerId,
+      socketId,
+      kind: producerData.producer.kind,
+      roomId: producerData.roomId,
+    });
+
+    // Remove producer from its room
+    const room = rooms.get(
+      producerData.roomId
+    );
+
+    if (room) {
+      room.producers.delete(
+        producerId
+      );
+    }
+
+    producers.delete(
+      producerId
+    );
+
+    console.log(
+      `Producer removed: ${producerId}`
+    );
+  }
+
+  // --------------------------------
+  // Remove consumers
+  // --------------------------------
+
+  for (
+    const [consumerId, consumerData]
+    of consumers.entries()
+  ) {
+    if (consumerData.socketId !== socketId) {
+      continue;
+    }
+
+    try {
+      consumerData.consumer.close();
+    } catch (error) {
+      console.error(
+        `Failed to close consumer ${consumerId}:`,
+        error
+      );
+    }
+
+    consumers.delete(
+      consumerId
+    );
+
+    console.log(
+      `Consumer removed: ${consumerId}`
+    );
+  }
+
+  // --------------------------------
+  // Remove transports
+  // --------------------------------
+
+  for (
+    const [transportId, transportData]
+    of transports.entries()
+  ) {
+    if (transportData.socketId !== socketId) {
+      continue;
+    }
+
+    try {
+      transportData.transport.close();
+    } catch (error) {
+      console.error(
+        `Failed to close transport ${transportId}:`,
+        error
+      );
+    }
+
+    transports.delete(
+      transportId
+    );
+
+    console.log(
+      `Transport removed: ${transportId}`
+    );
+  }
+
+  // --------------------------------
+  // Broadcaster disconnected
+  // --------------------------------
+
+  for (const [roomId, room] of rooms.entries()) {
+    if (room.broadcasterId !== socketId) {
+      continue;
+    }
+
+    // Save viewers before deleting room
+    const viewerIds = room.viewers
+      ? Array.from(room.viewers)
+      : [];
+
+    endedRooms.push({
+      roomId,
+      viewerIds,
+    });
+
+    room.status = 'ended';
+
+    rooms.delete(
+      roomId
+    );
+
+    console.log(
+      `Room automatically ended because broadcaster disconnected: ${roomId}`
+    );
+  }
+
+  // --------------------------------
+  // Final log
+  // --------------------------------
+
+  console.log(
+    `Cleaned up mediasoup resources for socket: ${socketId}`
+  );
+
+  // --------------------------------
+  // Return cleanup information
+  // --------------------------------
+
+  return {
+    removedProducers,
+    affectedRooms,
+    endedRooms,
+  };
+};
 
 export const removeRoomByBroadcaster = (socketId) => {
   for (const [roomId, room] of rooms.entries()) {
@@ -619,76 +807,30 @@ export const removeRoomByBroadcaster = (socketId) => {
 };
 
 
-export const getViewerCount = (roomId) => {
+export const registerBroadcaster = (
+  roomId,
+  socketId
+) => {
   const room = rooms.get(roomId);
 
   if (!room) {
     throw new Error('Room not found');
   }
 
-  return room.viewers.size;
-};
-
-export const getLiveRooms = () => {
-  return Array.from(rooms.entries()).map(
-    ([roomId, room]) => ({
-      roomId,
-      broadcasterId: room.broadcasterId,
-      producerCount: room.producers.size,
-      viewerCount: room.viewers.size,
-      status: room.status,
-      createdAt: room.createdAt,
-    })
-  );
-};
-
-
-export const endRoom = (roomId, socketId) => {
-  const room = rooms.get(roomId);
-
-  if (!room) {
-    throw new Error('Room not found');
-  }
-
-  if (room.broadcasterId !== socketId) {
+  if (
+    room.broadcasterId &&
+    room.broadcasterId !== socketId
+  ) {
     throw new Error(
-      'Only the broadcaster can end the room'
+      'Room already has a broadcaster'
     );
   }
 
-  // Keep viewer IDs before deleting the room
-  const viewerIds = room.viewers
-    ? Array.from(room.viewers)
-    : [];
-
-  // Close all producers belonging to this room
-  for (const producerId of room.producers) {
-    const producerData =
-      producers.get(producerId);
-
-    if (producerData) {
-      try {
-        producerData.producer.close();
-      } catch (error) {
-        console.error(
-          `Failed to close producer ${producerId}:`,
-          error
-        );
-      }
-
-      producers.delete(producerId);
-    }
-  }
-
-  // Remove the room
-  rooms.delete(roomId);
+  room.broadcasterId = socketId;
 
   console.log(
-    `Room ended: ${roomId}`
+    `Socket ${socketId} registered as broadcaster for room ${roomId}`
   );
 
-  return {
-    roomId,
-    viewerIds,
-  };
+  return room;
 };
