@@ -275,50 +275,101 @@ export const createConsumer = async (
   transportId,
   socketId,
   producerId,
-  rtpCapabilities
+  rtpCapabilities,
+  roomId
 ) => {
   const transportData = transports.get(transportId);
 
   if (!transportData) {
-    throw new Error(`Transport not found: ${transportId}`);
+    throw new Error(
+      `Transport not found: ${transportId}`
+    );
   }
 
   if (transportData.socketId !== socketId) {
-    throw new Error('Transport does not belong to this client');
+    throw new Error(
+      'Transport does not belong to this client'
+    );
   }
 
-
-console.log('Consume request:', {
-  producerId,
-  rtpCapabilities,
-});
-
-console.log(
-  'Router can consume:',
-  router.canConsume({
-    producerId,
-    rtpCapabilities,
-  })
-);
-
-
-  if (!router.canConsume({
-    producerId,
-    rtpCapabilities,
-  })) {
-    throw new Error('Router cannot consume this producer');
+  if (transportData.roomId !== roomId) {
+    throw new Error(
+      'Transport does not belong to this room'
+    );
   }
 
-  const consumer = await transportData.transport.consume({
+  const room = rooms.get(roomId);
+
+  if (!room) {
+    throw new Error('Room not found');
+  }
+
+  // Make sure this client is actually inside the room
+  const isBroadcaster =
+    room.broadcasterId === socketId;
+
+  const isViewer =
+    room.viewers?.has(socketId);
+
+  if (!isBroadcaster && !isViewer) {
+    throw new Error(
+      'Client is not a member of this room'
+    );
+  }
+
+  // Make sure producer belongs to this room
+  const producerData =
+    producers.get(producerId);
+
+  if (!producerData) {
+    throw new Error(
+      `Producer not found: ${producerId}`
+    );
+  }
+
+  if (producerData.roomId !== roomId) {
+    throw new Error(
+      'Producer does not belong to this room'
+    );
+  }
+
+  // Extra protection: producer must be registered
+  // inside the room's producer set
+  if (!room.producers.has(producerId)) {
+    throw new Error(
+      'Producer is not active in this room'
+    );
+  }
+
+  console.log('Consume authorization passed:', {
+    socketId,
+    roomId,
     producerId,
-    rtpCapabilities,
-    paused: true,
   });
+
+  if (
+    !router.canConsume({
+      producerId,
+      rtpCapabilities,
+    })
+  ) {
+    throw new Error(
+      'Router cannot consume this producer'
+    );
+  }
+
+  const consumer =
+    await transportData.transport.consume({
+      producerId,
+      rtpCapabilities,
+      paused: true,
+    });
 
   consumers.set(consumer.id, {
     consumer,
     socketId,
     producerId,
+    roomId,
   });
 
   console.log(
@@ -327,6 +378,10 @@ console.log(
 
   return consumer;
 };
+
+
+
+
 
 export const resumeConsumer = async (
   consumerId,
@@ -346,38 +401,68 @@ export const resumeConsumer = async (
 
   console.log(
     `Consumer resumed: ${consumerId}`
-  );
+   );
 };
+
+  
 
 
 export const cleanupSocket = (socketId) => {
   const removedProducers = [];
-  const endedRooms = [];
-  const removedViewerRooms = [];
+  const affectedRooms = [];
 
-  // --------------------------------
-  // Remove socket from viewer lists
-  // --------------------------------
-
+  // Remove socket from room viewers
   for (const [roomId, room] of rooms.entries()) {
-    if (room.viewers.has(socketId)) {
+    if (room.viewers?.has(socketId)) {
       room.viewers.delete(socketId);
 
-      removedViewerRooms.push({
+      affectedRooms.push({
         roomId,
         viewerCount: room.viewers.size,
       });
 
       console.log(
-        `Viewer ${socketId} removed from room ${roomId}`
+        `Viewer ${socketId} left room ${roomId}`
       );
     }
   }
 
-  // --------------------------------
-  // Close consumers
-  // --------------------------------
+  // Remove producers owned by socket
+  for (const [producerId, producerData] of producers.entries()) {
+    if (producerData.socketId === socketId) {
+      try {
+        producerData.producer.close();
+      } catch (error) {
+        console.error(
+          `Failed to close producer ${producerId}:`,
+          error
+        );
+      }
 
+      removedProducers.push({
+        id: producerId,
+        socketId,
+        kind: producerData.producer.kind,
+        roomId: producerData.roomId,
+      });
+
+      // Remove from room producer set
+      const room =
+        rooms.get(producerData.roomId);
+
+      if (room) {
+        room.producers.delete(producerId);
+      }
+
+      producers.delete(producerId);
+
+      console.log(
+        `Producer removed: ${producerId}`
+      );
+    }
+  }
+
+  // Remove consumers owned by socket
   for (const [consumerId, consumerData] of consumers.entries()) {
     if (consumerData.socketId === socketId) {
       try {
@@ -397,46 +482,7 @@ export const cleanupSocket = (socketId) => {
     }
   }
 
-  // --------------------------------
-  // Remove producers
-  // --------------------------------
-
-  for (const [producerId, producerData] of producers.entries()) {
-    if (producerData.socketId === socketId) {
-      try {
-        producerData.producer.close();
-      } catch (error) {
-        console.error(
-          `Failed to close producer ${producerId}:`,
-          error
-        );
-      }
-
-      const room = rooms.get(producerData.roomId);
-
-      if (room) {
-        room.producers.delete(producerId);
-      }
-
-      removedProducers.push({
-        id: producerId,
-        socketId,
-        kind: producerData.producer.kind,
-        roomId: producerData.roomId,
-      });
-
-      producers.delete(producerId);
-
-      console.log(
-        `Producer removed: ${producerId}`
-      );
-    }
-  }
-
-  // --------------------------------
-  // Close transports
-  // --------------------------------
-
+  // Remove transports owned by socket
   for (const [transportId, transportData] of transports.entries()) {
     if (transportData.socketId === socketId) {
       try {
@@ -456,40 +502,15 @@ export const cleanupSocket = (socketId) => {
     }
   }
 
-  // --------------------------------
-  // If broadcaster disconnected,
-  // automatically end their room
-  // --------------------------------
-
-  for (const [roomId, room] of rooms.entries()) {
-    if (room.broadcasterId === socketId) {
-      room.status = 'ended';
-
-      endedRooms.push({
-        roomId,
-        viewerIds: Array.from(room.viewers),
-      });
-
-      rooms.delete(roomId);
-
-      console.log(
-        `Room automatically ended because broadcaster disconnected: ${roomId}`
-      );
-    }
-  }
-
   console.log(
     `Cleaned up mediasoup resources for socket: ${socketId}`
   );
 
   return {
     removedProducers,
-    endedRooms,
-    removedViewerRooms,
+    affectedRooms,
   };
 };
-
-
 
 
 export const createRoom = (socketId) => {
