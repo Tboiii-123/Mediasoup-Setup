@@ -208,7 +208,7 @@ app.post(
   }
 );
 
-router.post(
+app.post(
   "/internal/rooms/:roomId/comment",
   (req, res) => {
 
@@ -295,7 +295,7 @@ router.post(
 );
 
 
-router.post(
+app.post(
   "/internal/rooms/:roomId/reaction",
   (req, res) => {
 
