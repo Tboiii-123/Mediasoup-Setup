@@ -207,6 +207,10 @@ app.post(
     }
   }
 );
+// ----------------------------------------
+// Receive comment from Main Backend
+// and broadcast to connected viewers
+// ----------------------------------------
 
 app.post(
   "/internal/rooms/:roomId/comment",
@@ -220,29 +224,73 @@ app.post(
       const { comment } =
         req.body;
 
+
       // --------------------------------
-      // Validate
+      // LOG REQUEST
+      // --------------------------------
+
+      console.log(
+        "=========================================="
+      );
+
+      console.log(
+        "📩 COMMENT RECEIVED FROM MAIN BACKEND"
+      );
+
+      console.log(
+        "Room ID:",
+        roomId
+      );
+
+      console.log(
+        "Comment:",
+        comment
+      );
+
+      console.log(
+        "=========================================="
+      );
+
+
+      // --------------------------------
+      // Validate roomId
       // --------------------------------
 
       if (!roomId) {
 
         return res.status(400).json({
+
+          success: false,
+
           error:
             "roomId is required",
+
         });
 
       }
 
-      if (  !comment ||
+
+      // --------------------------------
+      // Validate comment
+      // --------------------------------
+
+      if (
+        !comment ||
         typeof comment !== "object"
       ) {
 
         return res.status(400).json({
+
+          success: false,
+
           error:
             "comment is required",
+
         });
 
       }
+
+
       // --------------------------------
       // Check room
       // --------------------------------
@@ -250,40 +298,80 @@ app.post(
       const room =
         getRoom(roomId);
 
+
       if (!room) {
 
+        console.log(
+          "❌ Room not found:",
+          roomId
+        );
+
         return res.status(404).json({
+
+          success: false,
+
           error:
             "Room not found",
+
         });
 
       }
 
+
       // --------------------------------
-      // Broadcast
+      // Room found
       // --------------------------------
 
-      io.to( `broadcast:${roomId}`).emit(
-        "newComment", comment
+      console.log(
+        "✅ Room found:",
+        roomId
       );
+
+
+      // --------------------------------
+      // Broadcast comment
+      // --------------------------------
+
+      io
+        .to(`broadcast:${roomId}`)
+        .emit(
+          "newComment",
+          comment
+        );
+
+
+      console.log(
+        "📡 Comment broadcasted to room:",
+        roomId
+      );
+
 
       // --------------------------------
       // Response
       // --------------------------------
-      return res.json({
+
+      return res.status(200).json({
+
         success: true,
+
+        roomId,
+
         comment,
 
       });
 
+
     } catch (error) {
 
       console.error(
-        "Failed to broadcast comment:",
+        "❌ Failed to broadcast comment:",
         error
       );
 
+
       return res.status(500).json({
+
+        success: false,
 
         error:
           "Failed to broadcast comment",
@@ -291,39 +379,93 @@ app.post(
       });
 
     }
+
   }
 );
 
+// ----------------------------------------
+// Receive reaction from Main Backend
+// and broadcast to connected viewers
+// ----------------------------------------
 
 app.post(
   "/internal/rooms/:roomId/reaction",
   (req, res) => {
 
     try {
-      const { roomId } = req.params;
 
-      const { reaction } =   req.body;
+      const { roomId } =
+        req.params;
+
+      const { reaction } =
+        req.body;
+
 
       // --------------------------------
-      // Validate
+      // LOG REQUEST
+      // --------------------------------
+
+      console.log(
+        "=========================================="
+      );
+
+      console.log(
+        "❤️ REACTION RECEIVED FROM MAIN BACKEND"
+      );
+
+      console.log(
+        "Room ID:",
+        roomId
+      );
+
+      console.log(
+        "Reaction:",
+        reaction
+      );
+
+      console.log(
+        "=========================================="
+      );
+
+
+      // --------------------------------
+      // Validate roomId
       // --------------------------------
 
       if (!roomId) {
 
         return res.status(400).json({
+
+          success: false,
+
           error:
             "roomId is required",
+
         });
 
       }
 
-      if ( !reaction ||typeof reaction !== "object" ) {
+
+      // --------------------------------
+      // Validate reaction
+      // --------------------------------
+
+      if (
+        !reaction ||
+        typeof reaction !== "object"
+      ) {
+
         return res.status(400).json({
+
+          success: false,
+
           error:
             "reaction is required",
+
         });
 
       }
+
 
       // --------------------------------
       // Check room
@@ -332,21 +474,51 @@ app.post(
       const room =
         getRoom(roomId);
 
+
       if (!room) {
 
+        console.log(
+          "❌ Room not found:",
+          roomId
+        );
+
         return res.status(404).json({
+
+          success: false,
+
           error:
             "Room not found",
+
         });
+
       }
 
 
       // --------------------------------
-      // Broadcast
+      // Room found
       // --------------------------------
 
-      io.to( `broadcast:${roomId}`).emit(
-        "newReaction", reaction
+      console.log(
+        "✅ Room found:",
+        roomId
+      );
+
+
+      // --------------------------------
+      // Broadcast reaction
+      // --------------------------------
+
+      io
+        .to(`broadcast:${roomId}`)
+        .emit(
+          "newReaction",
+          reaction
+        );
+
+
+      console.log(
+        "📡 Reaction broadcasted to room:",
+        roomId
       );
 
 
@@ -354,21 +526,28 @@ app.post(
       // Response
       // --------------------------------
 
-      return res.json({
+      return res.status(200).json({
 
         success: true,
+
+        roomId,
+
         reaction,
 
       });
 
+
     } catch (error) {
 
       console.error(
-        "Failed to broadcast reaction:",
+        "❌ Failed to broadcast reaction:",
         error
       );
 
+
       return res.status(500).json({
+
+        success: false,
 
         error:
           "Failed to broadcast reaction",
@@ -376,6 +555,7 @@ app.post(
       });
 
     }
+
   }
 );
 
