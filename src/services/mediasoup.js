@@ -1,6 +1,7 @@
 
 import mediasoup from 'mediasoup';
 import { MEDIASOUP_ANNOUNCED_IP } from '../config/env.js';
+import { markLiveAsEnded } from './liveapi.js';
 
 
 const transports = new Map();
@@ -889,9 +890,8 @@ export const endRoom = (
 
   room.status = 'ended';
 
-  rooms.delete(
-    roomId
-  );
+  rooms.delete(roomId
+);
 
   console.log(
     `Room ended: ${roomId}`

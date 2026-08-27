@@ -11,6 +11,8 @@ import {
   createWorker,
   createRouter,
   createRoom,
+  getRoom,
+  endRoom
 } from './services/mediasoup.js';
 
 
@@ -156,6 +158,53 @@ app.post(
 
     }
 
+  }
+);
+app.post(
+  '/internal/rooms/:roomId/end',
+  async (req, res) => {
+
+    try {
+
+      const {
+        roomId
+      } = req.params;
+
+      const room =
+        getRoom(roomId);
+
+      if (!room) {
+        return res.status(404).json({
+          success: false,
+          error: 'Room not found',
+        });
+      }
+
+      const broadcasterId =
+        room.broadcasterId;
+
+      await endRoom(
+        roomId,
+        broadcasterId
+      );
+
+      return res.status(200).json({
+        success: true,
+        roomId,
+      });
+
+    } catch (error) {
+
+      console.error(
+        'Failed to end runtime room:',
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
   }
 );
 
