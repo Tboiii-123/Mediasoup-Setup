@@ -208,6 +208,177 @@ app.post(
   }
 );
 
+router.post(
+  "/internal/rooms/:roomId/comment",
+  (req, res) => {
+
+    try {
+
+      const { roomId } =
+        req.params;
+
+      const { comment } =
+        req.body;
+
+      // --------------------------------
+      // Validate
+      // --------------------------------
+
+      if (!roomId) {
+
+        return res.status(400).json({
+          error:
+            "roomId is required",
+        });
+
+      }
+
+      if (  !comment ||
+        typeof comment !== "object"
+      ) {
+
+        return res.status(400).json({
+          error:
+            "comment is required",
+        });
+
+      }
+      // --------------------------------
+      // Check room
+      // --------------------------------
+
+      const room =
+        getRoom(roomId);
+
+      if (!room) {
+
+        return res.status(404).json({
+          error:
+            "Room not found",
+        });
+
+      }
+
+      // --------------------------------
+      // Broadcast
+      // --------------------------------
+
+      io.to( `broadcast:${roomId}`).emit(
+        "newComment", comment
+      );
+
+      // --------------------------------
+      // Response
+      // --------------------------------
+      return res.json({
+        success: true,
+        comment,
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        "Failed to broadcast comment:",
+        error
+      );
+
+      return res.status(500).json({
+
+        error:
+          "Failed to broadcast comment",
+
+      });
+
+    }
+  }
+);
+
+
+router.post(
+  "/internal/rooms/:roomId/reaction",
+  (req, res) => {
+
+    try {
+      const { roomId } = req.params;
+
+      const { reaction } =   req.body;
+
+      // --------------------------------
+      // Validate
+      // --------------------------------
+
+      if (!roomId) {
+
+        return res.status(400).json({
+          error:
+            "roomId is required",
+        });
+
+      }
+
+      if ( !reaction ||typeof reaction !== "object" ) {
+        return res.status(400).json({
+          error:
+            "reaction is required",
+        });
+
+      }
+
+      // --------------------------------
+      // Check room
+      // --------------------------------
+
+      const room =
+        getRoom(roomId);
+
+      if (!room) {
+
+        return res.status(404).json({
+          error:
+            "Room not found",
+        });
+      }
+
+
+      // --------------------------------
+      // Broadcast
+      // --------------------------------
+
+      io.to( `broadcast:${roomId}`).emit(
+        "newReaction", reaction
+      );
+
+
+      // --------------------------------
+      // Response
+      // --------------------------------
+
+      return res.json({
+
+        success: true,
+        reaction,
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        "Failed to broadcast reaction:",
+        error
+      );
+
+      return res.status(500).json({
+
+        error:
+          "Failed to broadcast reaction",
+
+      });
+
+    }
+  }
+);
+
 
 // ============================================
 // SIGNALING
